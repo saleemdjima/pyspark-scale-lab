@@ -228,3 +228,7 @@ data/
 
 # Debug 
 runs/
+
+# Terraform state file 
+.*terraform
+.*terraform.lock.hcl 
