@@ -29,7 +29,6 @@ def parse_args():
     p = argparse.ArgumentParser(description="Binance trades -> trades + 1m OHLCV bars")
     p.add_argument("--input", required=True, help="raw CSV root; symbol is in the path")
     p.add_argument("--output", required=True, help="output root (local path or s3://...)")
-    p.add_argument("--date", required=True, help="UTC trade date YYYY-MM-DD (provenance)")
     p.add_argument("--layout", choices=["date", "date_symbol"], default="date")
     p.add_argument("--has-header", action="store_true", help="set if the CSV has a header row")
     return p.parse_args()
