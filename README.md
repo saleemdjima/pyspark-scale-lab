@@ -106,7 +106,6 @@ uv run spark-submit \
   src/pyspark_scale_lab/job.py \
   --input data/daily/2025-01-02/ \
   --output runs/test \
-  --date 2025-01-02 \
   --layout date
 ```
 

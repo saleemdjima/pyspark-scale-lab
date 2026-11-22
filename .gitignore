@@ -223,12 +223,15 @@ __marimo__/
 .streamlit/secrets.toml
 
 
-# Test data 
+# Test data
 data/
 
-# Debug 
+# Local output
 runs/
 
-# Terraform state file 
-.*terraform
-.*terraform.lock.hcl 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
