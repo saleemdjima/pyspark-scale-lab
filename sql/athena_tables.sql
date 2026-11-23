@@ -1,7 +1,5 @@
--- sql/athena_tables.sql
+-- Tables over the job output. Replace BUCKET with `terraform -chdir=infra output -raw bucket_name`.
 
-
--- TABLE trades 
 CREATE EXTERNAL TABLE IF NOT EXISTS market_lab.trades (
   symbol         string,
   trade_id       bigint,
@@ -13,7 +11,6 @@ PARTITIONED BY (trade_date string)
 STORED AS PARQUET
 LOCATION 's3://BUCKET/catalog/trades/';
 
--- TABLE bars_1m
 CREATE EXTERNAL TABLE IF NOT EXISTS market_lab.bars_1m (
   symbol       string,
   minute       timestamp,
@@ -29,8 +26,7 @@ PARTITIONED BY (trade_date string)
 STORED AS PARQUET
 LOCATION 's3://BUCKET/catalog/bars_1m/';
 
--- Register the run partition at its exact S3 path.
--- Do not use MSCK REPAIR; it searches under catalog/, not runs/.
+-- Partitions live under runs/, outside the table LOCATION, so MSCK REPAIR cannot find them.
 ALTER TABLE market_lab.trades ADD IF NOT EXISTS
   PARTITION (trade_date='2025-01-02')
   LOCATION 's3://BUCKET/runs/test/trades/trade_date=2025-01-02/';
@@ -39,17 +35,17 @@ ALTER TABLE market_lab.bars_1m ADD IF NOT EXISTS
   PARTITION (trade_date='2025-01-02')
   LOCATION 's3://BUCKET/runs/test/bars_1m/trade_date=2025-01-02/';
 
--- Query A: BTC trades from 00:00 to 00:15 UTC
+-- BTCUSDT, 00:00-00:15 UTC
 SELECT count(*)                               AS trade_count,
        sum(quantity)                          AS volume,
        sum(price*quantity)/nullif(sum(quantity),0) AS vwap
 FROM market_lab.trades
 WHERE trade_date = '2025-01-02'
   AND symbol = 'BTCUSDT'
-  AND event_time_us >= 1735776000000000   -- 2025-01-02 00:00:00 UTC (µs)
-  AND event_time_us <  1735776900000000;  -- +15 min
+  AND event_time_us >= 1735776000000000
+  AND event_time_us <  1735776900000000;
 
--- Query B: daily activity for all symbols
+-- Daily activity per symbol
 SELECT symbol,
        count(*)      AS trades,
        sum(quantity) AS volume
@@ -57,6 +53,3 @@ FROM market_lab.trades
 WHERE trade_date = '2025-01-02'
 GROUP BY symbol
 ORDER BY trades DESC;
-
--- After each query, note the "Data scanned" (bytes scanned) shown by Athena:
--- this is your cost/performance metric and the basis for the partitioning benchmark (Phase 4).
