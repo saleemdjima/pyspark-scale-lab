@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     BooleanType,
@@ -25,7 +25,7 @@ RAW_SCHEMA = StructType(
 )
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Binance trades -> trades + 1m OHLCV bars")
     p.add_argument("--input", required=True, help="raw CSV root; symbol is in the path")
     p.add_argument("--output", required=True, help="output root (local path or s3://...)")
@@ -34,7 +34,7 @@ def parse_args():
     return p.parse_args()
 
 
-def read_trades(spark, input_path: str, has_header: bool):
+def read_trades(spark: SparkSession, input_path: str, has_header: bool) -> DataFrame:
     """Read raw CSVs (recursively, one subdir per symbol) and derive time columns."""
 
     symbol_from_path = F.element_at(F.split(F.input_file_name(), "/"), -2)
@@ -48,12 +48,19 @@ def read_trades(spark, input_path: str, has_header: bool):
         .withColumn("symbol", symbol_from_path)
     )
 
-    # microseconds -> timestamp -> UTC date + minute bucket
+    return with_time_columns(df)
+
+
+def with_time_columns(df: DataFrame) -> DataFrame:
+    """Derive the UTC trade date and the 1-minute bucket from event_time_us (microseconds).
+
+    Both depend on spark.sql.session.timeZone, which main() pins to UTC.
+    """
     event_ts = F.timestamp_micros(F.col("event_time_us"))
     return df.withColumn("trade_date", F.to_date(event_ts)).withColumn("minute", F.date_trunc("minute", event_ts))
 
 
-def validate_trades(trades) -> None:
+def validate_trades(trades: DataFrame) -> None:
     """Fail the batch loudly if data-quality invariants are violated."""
     agg = trades.select(
         F.count("*").alias("n"),
@@ -79,7 +86,7 @@ def validate_trades(trades) -> None:
         raise ValueError("DATA QUALITY FAILED: " + "; ".join(problems))
 
 
-def build_bars(trades):
+def build_bars(trades: DataFrame) -> DataFrame:
     order_key = F.struct("event_time_us", "trade_id")
 
     return trades.groupBy("symbol", "minute", "trade_date").agg(
@@ -93,9 +100,14 @@ def build_bars(trades):
     )
 
 
-def main():
+def main() -> None:
     args = parse_args()
-    spark = SparkSession.builder.appName("market-trades").getOrCreate()
+    spark = (
+        SparkSession.builder.appName("market-trades")
+        # to_date/date_trunc use the session time zone: pin UTC so every runtime agrees
+        .config("spark.sql.session.timeZone", "UTC")
+        .getOrCreate()
+    )
 
     trades = read_trades(spark, args.input, args.has_header)
 
