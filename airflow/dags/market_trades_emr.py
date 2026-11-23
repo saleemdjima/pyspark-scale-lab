@@ -14,7 +14,6 @@ with DAG(
     catchup=False,
     tags=["spark", "emr", "market-trades"],
 ) as dag:
-
     run_spark = EmrServerlessStartJobOperator(
         task_id="run_spark_job",
         application_id=APPLICATION_ID,
@@ -23,10 +22,12 @@ with DAG(
             "sparkSubmit": {
                 "entryPoint": f"s3://{BUCKET}/code/job.py",
                 "entryPointArguments": [
-                    "--input", f"s3://{BUCKET}/raw/daily/2025-01-02/",
-                    "--output", f"s3://{BUCKET}/runs/airflow/",
-                    "--date", "2025-01-02",
-                    "--layout", "date",
+                    "--input",
+                    f"s3://{BUCKET}/raw/daily/2025-01-02/",
+                    "--output",
+                    f"s3://{BUCKET}/runs/airflow/",
+                    "--layout",
+                    "date",
                 ],
             }
         },
