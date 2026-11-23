@@ -235,3 +235,6 @@ runs/
 *.tfstate.*
 crash.log
 *.tfvars
+
+# docs
+docs/notes/
