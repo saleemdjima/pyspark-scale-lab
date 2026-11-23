@@ -52,10 +52,7 @@ def read_trades(spark: SparkSession, input_path: str, has_header: bool) -> DataF
 
 
 def with_time_columns(df: DataFrame) -> DataFrame:
-    """Derive the UTC trade date and the 1-minute bucket from event_time_us (microseconds).
-
-    Both depend on spark.sql.session.timeZone, which main() pins to UTC.
-    """
+    """Add trade_date and the 1-minute bucket, both in the session time zone (UTC)."""
     event_ts = F.timestamp_micros(F.col("event_time_us"))
     return df.withColumn("trade_date", F.to_date(event_ts)).withColumn("minute", F.date_trunc("minute", event_ts))
 
@@ -102,12 +99,7 @@ def build_bars(trades: DataFrame) -> DataFrame:
 
 def main() -> None:
     args = parse_args()
-    spark = (
-        SparkSession.builder.appName("market-trades")
-        # to_date/date_trunc use the session time zone: pin UTC so every runtime agrees
-        .config("spark.sql.session.timeZone", "UTC")
-        .getOrCreate()
-    )
+    spark = SparkSession.builder.appName("market-trades").config("spark.sql.session.timeZone", "UTC").getOrCreate()
 
     trades = read_trades(spark, args.input, args.has_header)
 

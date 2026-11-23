@@ -82,8 +82,7 @@ def test_bars_are_split_per_minute_and_symbol(spark: SparkSession) -> None:
         ],
     )
 
-    # Format the minute inside Spark (session time zone = UTC). collect() would turn timestamps
-    # into naive datetimes in the *machine's* local time zone, making the test machine-dependent.
+    # Format in Spark: collect() converts timestamps to the machine's local time zone.
     rows = build_bars(trades).select("symbol", F.date_format("minute", "HH:mm").alias("hhmm"), "trade_count").collect()
     bars = {(r["symbol"], r["hhmm"]): r["trade_count"] for r in rows}
 
@@ -95,7 +94,6 @@ def test_bars_are_split_per_minute_and_symbol(spark: SparkSession) -> None:
 
 
 def test_trade_date_is_utc(spark: SparkSession) -> None:
-    # 23:30 UTC — would be the next day in Europe/Paris if the session time zone weren't UTC.
     late_evening_us = DAY_START_US + (23 * 3600 + 30 * 60) * SECOND_US
     [row] = make_trades(spark, [("BTCUSDT", 1, late_evening_us, "100", "1")]).collect()
 

@@ -1,12 +1,15 @@
 # PySpark Scale Lab
 
+![ci](https://github.com/saleemdjima/pyspark-scale-lab/actions/workflows/ci.yaml/badge.svg)
+
 PySpark Scale Lab turns Binance spot-trade archives into typed trade records and
 one-minute OHLCV bars. The Spark job writes partitioned Parquet files locally
 or to S3, and Terraform defines the AWS resources used to run and query the
 pipeline.
 
-For 2025-01-02, the included download script retrieves three symbols:
-`BTCUSDT`, `ETHUSDT`, and `SOLUSDT`.
+The pipeline covers three symbols, `BTCUSDT`, `ETHUSDT` and `SOLUSDT`, at two
+scales: one day (2025-01-02) for local development, and the full month of
+January 2025 (25.6 GB of CSV) processed on EMR Serverless.
 
 ## How the data moves
 
@@ -137,6 +140,8 @@ scripts/download_monthly_data.sh
                                Download and verify the January 2025 month
 scripts/publish_to_s3.sh       Copy a local run to S3
 scripts/launch_job.sh          Start the configured EMR Serverless job
+airflow/dags/                  Airflow DAG that submits the job to EMR Serverless
+tests/                         pytest unit tests for the transformations
 infra/                         Terraform resources and AWS outputs
 sql/                           Athena table definitions and benchmark queries
 data/                          Downloaded archives and extracted CSV files
@@ -144,6 +149,24 @@ runs/                          Local Parquet output
 ```
 
 `data/` and `runs/` are generated directories and are ignored by Git.
+
+## Tests and CI
+
+The transformations are covered by pytest unit tests that build small DataFrames
+in memory, so no data download is needed:
+
+```bash
+uv run pytest -v
+```
+
+They check that tied timestamps produce deterministic open and close prices,
+that VWAP is exact, that trades are bucketed by UTC minute and date, and that
+each data-quality rule rejects bad input.
+
+GitHub Actions runs the same checks on every pull request: `ruff check`,
+`ruff format --check`, `mypy` in strict mode, `pytest`, and
+`terraform fmt -check` plus `terraform validate`. The Terraform job uses
+`init -backend=false` and needs no AWS credentials.
 
 ## AWS setup
 
@@ -167,25 +190,75 @@ The EMR application stops after 15 minutes of inactivity.
 
 ## Run on EMR Serverless
 
-Copy the Spark source to S3, upload the raw CSV data, and update the entry-point
-and input paths in `scripts/launch_job.sh` if needed. The script can then
-submit the existing job:
+Copy `src/pyspark_scale_lab/job.py` to `s3://<bucket>/code/job.py` and upload
+the raw CSV data, then submit the job:
 
 ```bash
 bash scripts/launch_job.sh
 ```
 
-It reads the EMR application ID and execution role from Terraform outputs,
-starts `market-trades-emr`, and prints the returned job run ID.
+By default the script reads the application ID, execution role and bucket from
+Terraform outputs and processes the 2025-01-02 daily sample. Override `INPUT`,
+`OUTPUT` and `NAME` to run another dataset. The script prints the job run ID and
+its initial state; it does not wait for completion.
+
+## Scaling to a full month
+
+The same `job.py` runs unchanged on the January 2025 month. Download and verify
+the archives, then upload only the extracted CSV files:
+
+```bash
+bash scripts/download_monthly_data.sh
+aws s3 sync data/monthly/ s3://<bucket>/raw/monthly/ --exclude '*' --include '*.csv'
+```
+
+| Symbol | CSV size |
+|---|---|
+| BTCUSDT | 10.4 GB |
+| SOLUSDT | 8.1 GB |
+| ETHUSDT | 7.1 GB |
+| **Total** | **25.6 GB** |
+
+Submit it with:
+
+```bash
+INPUT=s3://<bucket>/raw/monthly/ OUTPUT=s3://<bucket>/runs/emr-monthly/ NAME=monthly \
+  bash scripts/launch_job.sh
+```
+
+Baseline run on EMR Serverless with the default application settings:
+
+| Metric | Value |
+|---|---|
+| Wall-clock duration | 553 s |
+| vCPU-hours | 2.44 |
+| Memory GB-hours | 9.74 |
+
+The job reads the input through four separate actions (two data-quality checks
+and two writes) without caching, so the CSV is likely parsed four times. That is
+the first optimization to measure.
+
+## Orchestrate with Airflow
+
+`airflow/dags/market_trades_emr.py` submits the same job with
+`EmrServerlessStartJobOperator` and waits for it to finish. Account-specific
+values are not hardcoded: they are Jinja templates resolved from Airflow
+Variables when the task runs. Provide them from Terraform outputs, for example
+as environment variables:
+
+```bash
+export AIRFLOW_VAR_MARKET_LAB_BUCKET=$(terraform -chdir=infra output -raw bucket_name)
+export AIRFLOW_VAR_EMR_APPLICATION_ID=$(terraform -chdir=infra output -raw emr_application_id)
+export AIRFLOW_VAR_EMR_EXECUTION_ROLE_ARN=$(terraform -chdir=infra output -raw emr_execution_role_arn)
+```
 
 To publish a local run:
 
 ```bash
-bash scripts/publish_to_s3.sh test 2025-01-02
+bash scripts/publish_to_s3.sh test
 ```
 
-The first argument is the run directory under `runs/`; the second is recorded
-for the command interface and is not used to select output files.
+The argument is the run directory under `runs/` (default: `test`).
 
 ## Query with Athena
 
@@ -199,9 +272,24 @@ The SQL file creates `trades` and `bars_1m` external tables and registers
 partition locations for `runs/test`. Run it in the `market-lab-wg` workgroup,
 after the matching Parquet files have been uploaded to S3.
 
-`sql/athena_benchmark.sql` contains separate table layouts for comparing
-date-only and date-plus-symbol partitioning. It is a benchmark helper, not a
-required step for querying the pipeline output.
+The trade and bar partitions are written under `runs/`, outside the tables'
+`LOCATION`, so they are registered with `ALTER TABLE ... ADD PARTITION` rather
+than `MSCK REPAIR TABLE`.
+
+## Partitioning benchmark
+
+`sql/athena_benchmark.sql` writes the same trades with two layouts and runs the
+same single-symbol query on both (replace `BUCKET` there as well):
+
+| Layout | Partitions | Data scanned for one symbol and one day |
+|---|---|---|
+| A | `trade_date` | 4.12 MB |
+| B | `trade_date`, `symbol` | 4.15 MB |
+
+Partitioning by symbol brought no gain. Partition pruning already skips the
+other dates, and Athena uses the min/max statistics of each Parquet row group to
+skip the row groups of other symbols. Layout A is kept: it is simpler and
+produces fewer small files.
 
 ## Implementation notes
 
@@ -211,7 +299,9 @@ required step for querying the pipeline output.
 - OHLCV open and close values use `event_time_us` and `trade_id` as an ordering
   key, making tied trades deterministic.
 - The job derives UTC trade dates and minute buckets from Binance microsecond
-  timestamps.
+  timestamps, and pins `spark.sql.session.timeZone` to UTC: `to_date` and
+  `date_trunc` follow the session time zone, so a 23:30 UTC trade would
+  otherwise land in the next day's partition on a machine set to Europe/Paris.
 - S3 paths are passed through the same CLI flags as local paths.
 - Athena table paths and bucket-specific values must be kept in sync with the
   Terraform and run outputs.

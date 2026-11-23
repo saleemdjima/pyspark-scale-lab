@@ -3,9 +3,9 @@ from datetime import datetime
 from airflow import DAG
 from airflow.providers.amazon.aws.operators.emr import EmrServerlessStartJobOperator
 
-BUCKET = "market-lab-09e954a4"
-APPLICATION_ID = "00gaggti1h644215"
-EXECUTION_ROLE_ARN = "arn:aws:iam::840271450344:role/market-lab-emr-exec"
+BUCKET = "{{ var.value.market_lab_bucket }}"
+APPLICATION_ID = "{{ var.value.emr_application_id }}"
+EXECUTION_ROLE_ARN = "{{ var.value.emr_execution_role_arn }}"
 
 with DAG(
     dag_id="market_trades_emr",

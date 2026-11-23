@@ -3,7 +3,6 @@
 set -euo pipefail
 
 ATTEMPT="${1:-test}"
-DATE="${2:-2025-01-02}"
 
 BUCKET="$(terraform -chdir=infra output -raw bucket_name)"
 WG="$(terraform -chdir=infra output -raw athena_workgroup)"
