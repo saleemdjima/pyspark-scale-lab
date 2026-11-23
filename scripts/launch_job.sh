@@ -2,16 +2,15 @@
 
 set -euo pipefail
 
-# This script launches a Spark job on EMR Serverless using the AWS CLI.
-# It requires the following environment variables to be set:
+# Submit job.py to EMR Serverless. Override APP, ROLE, BUCKET, INPUT, OUTPUT or NAME via the environment.
+
 APP="${APP:-$(terraform -chdir=infra output -raw emr_application_id)}"
 ROLE="${ROLE:-$(terraform -chdir=infra output -raw emr_execution_role_arn)}"
-BUCKET=market-lab-09e954a4
+BUCKET="${BUCKET:-$(terraform -chdir=infra output -raw bucket_name)}"
 INPUT="${INPUT:-s3://$BUCKET/raw/daily/2025-01-02/}"
 OUTPUT="${OUTPUT:-s3://$BUCKET/runs/emr/}"
 NAME="${NAME:-market-trades-emr}"
 
-# Stop the Script if APP or ROLE is empty
 if [[ -z "$APP" || -z "$ROLE" ]]; then
   echo "Error: APP or ROLE is empty. Please check your Terraform outputs."
   exit 1
@@ -27,5 +26,4 @@ RUN=$(aws emr-serverless start-job-run \
   --query jobRunId --output text)
 echo "job run: $RUN"
 
-# Wait for job to complete
 aws emr-serverless get-job-run --application-id "$APP" --job-run-id "$RUN" --query 'jobRun.state' --output text
